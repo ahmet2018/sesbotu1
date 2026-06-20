@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 import os
 
-# Flask Sunucusu (Render'da botun aktif kalmasını sağlar)
+# 1. FLASK SUNUCUSU (Render'da botun uyumasını engeller)
 app = Flask('')
 
 @app.route('/')
@@ -21,21 +21,21 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# Discord Bot Ayarları
+# 2. BOT SINIFI VE AYARLARI
 class MusicBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
-        # Slash komutları için Message Content Intent'e gerek kalmadı ama default kalsın
+        intents.message_content = True # Her ihtimale karşı açık kalsın
         super().__init__(command_prefix='!', intents=intents)
 
     async def setup_hook(self):
-        # Slash komutlarını senkronize et
+        # Slash komutlarını Discord'a bildirir
         await self.tree.sync()
-        print(f"Slash komutları senkronize edildi!")
+        print("Slash komutları senkronize edildi!")
 
 bot = MusicBot()
 
-# yt-dlp ve FFmpeg Ayarları
+# 3. YOUTUBE VE SES AYARLARI
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'restrictfilenames': True,
@@ -46,7 +46,9 @@ ytdl_format_options = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    # YouTube Engelini Aşmak İçin:
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 }
 
 ffmpeg_options = {
@@ -72,52 +74,51 @@ class YTDLSource(discord.PCMVolumeTransformer):
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
 
-@bot.event
-async def on_ready():
-    print(f'{bot.user.name} olarak giriş yapıldı ve Slash komutları hazır!')
-
-# SLASH KOMUTLARI
-@bot.tree.command(name="join", description="Ses kanalına ID ile katılır")
+# 4. SLASH KOMUTLARI
+@bot.tree.command(name="join", description="Ses kanalına ID ile katılır ve kendini sağırlaştırır")
 async def join(interaction: discord.Interaction, kanal_id: str):
     try:
         channel = bot.get_channel(int(kanal_id))
         if not channel:
             return await interaction.response.send_message("❌ Hata: Geçersiz kanal ID'si!", ephemeral=True)
         
+        # self_deaf=True ile bot kendini sağırlaştırır
         if interaction.guild.voice_client is not None:
             await interaction.guild.voice_client.move_to(channel)
         else:
-            await channel.connect()
-        await interaction.response.send_message(f"✅ **{channel.name}** kanalına başarıyla katıldım!")
+            await channel.connect(self_deaf=True)
+        
+        await interaction.response.send_message(f"✅ **{channel.name}** kanalına katıldım ve sağırlaştım!")
     except Exception as e:
-        await interaction.response.send_message(f"❌ Bir hata oluştu: {str(e)}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Hata: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="play", description="Müzik çalar (Link veya isim)")
 async def play(interaction: discord.Interaction, sarki: str):
     if interaction.guild.voice_client is None:
-        return await interaction.response.send_message("❌ Önce botu bir kanala sokmalısın! `/join` komutunu kullan.", ephemeral=True)
+        return await interaction.response.send_message("❌ Önce botu kanala sok! (/join)", ephemeral=True)
 
-    await interaction.response.defer() # İşlem uzun sürebileceği için Discord'a 'bekle' diyoruz
+    await interaction.response.defer()
 
     try:
         player = await YTDLSource.from_url(sarki, loop=bot.loop, stream=True)
-        interaction.guild.voice_client.play(player, after=lambda e: print(f'Hata: {e}') if e else None)
+        interaction.guild.voice_client.play(player)
         await interaction.followup.send(f'🎵 Şimdi çalıyor: **{player.title}**')
     except Exception as e:
-        await interaction.followup.send(f"❌ Müzik çalınırken hata oluştu: {str(e)}")
+        await interaction.followup.send(f"❌ Hata: {str(e)}")
 
-@bot.tree.command(name="stop", description="Botu kanaldan çıkarır")
+@bot.tree.command(name="stop", description="Kanaldan ayrılır")
 async def stop(interaction: discord.Interaction):
     if interaction.guild.voice_client:
         await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("👋 Görüşürüz, kanaldan ayrıldım!")
+        await interaction.response.send_message("👋 Kanaldan ayrıldım!")
     else:
         await interaction.response.send_message("Zaten bir kanalda değilim.", ephemeral=True)
 
+# 5. BOTU ÇALIŞTIR
 if __name__ == "__main__":
     keep_alive()
     token = os.getenv('DISCORD_TOKEN')
     if token:
         bot.run(token)
     else:
-        print("Hata: DISCORD_TOKEN bulunamadı! Render üzerinden Environment Variables kısmına ekle.")
+        print("Hata: DISCORD_TOKEN bulunamadı!")
